@@ -72,6 +72,9 @@ func main() {
 	if err := initPlaybackCustomDevice(filepath.Join(*dataDir, "playback-custom-device.json")); err != nil {
 		log.Printf("prepare custom playback device: %v", err)
 	}
+	// Remote playback config: cached file first, background refresh after.
+	// Never blocks startup; any failure keeps the built-in values.
+	initMiniReelRemoteConfig(filepath.Join(*dataDir, "minireel-remote-config.json"))
 	s.numberInputs = newNumberInputManager()
 	defer s.numberInputs.close()
 	s.searchHistoryStore, err = newSearchHistoryStore(*dataDir)

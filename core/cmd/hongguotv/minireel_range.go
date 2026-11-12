@@ -323,7 +323,7 @@ func miniReelDoRangeWithTimeout(ctx context.Context, target string, start, end i
 	if err != nil {
 		return nil, err
 	}
-	req.Header.Set("User-Agent", miniReelAppUA)
+	req.Header.Set("User-Agent", miniReelEffectiveAppUA())
 	req.Header.Set("Accept-Encoding", "identity")
 	req.Header.Set("Referer", "https://novel.snssdk.com/")
 	req.Header.Set("Origin", "https://novel.snssdk.com")

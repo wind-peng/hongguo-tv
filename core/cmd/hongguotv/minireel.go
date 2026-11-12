@@ -1008,19 +1008,18 @@ type miniReelPlaybackRouteTarget struct {
 
 // The player keeps a small explicit set of production hosts. This is a bounded
 // hedge, not an unbounded retry loop, and fixture/custom endpoints never use it.
+// Hosts follow the remote config; the list is capped at the available route
+// identities so a longer config list cannot panic.
 func miniReelProductionPlaybackRoutes() []miniReelPlaybackRouteTarget {
-	hosts := []string{
-		"api5-normal-sinfonlinea.fqnovel.com",
-		"api5-normal-sinfonlinec.fqnovel.com",
-		"api5-normal-sinfonlineb.fqnovel.com",
-		"api3-normal-sinfonlinea.fqnovel.com",
-		"api3-normal-sinfonlineb.fqnovel.com",
-		"api3-normal-sinfonlinec.fqnovel.com",
+	hosts := miniReelEffectiveRouteHosts()
+	if len(hosts) > len(miniReelPlaybackRouteIdentities) {
+		hosts = hosts[:len(miniReelPlaybackRouteIdentities)]
 	}
+	path := miniReelEffectiveLegacyAPIPath()
 	routes := make([]miniReelPlaybackRouteTarget, 0, len(hosts))
 	for i, host := range hosts {
 		routes = append(routes, miniReelPlaybackRouteTarget{
-			name: host, endpoint: "https://" + host + miniReelAPIPath,
+			name: host, endpoint: "https://" + host + path,
 			identity: miniReelPlaybackRouteIdentities[i],
 		})
 	}
@@ -1028,7 +1027,7 @@ func miniReelProductionPlaybackRoutes() []miniReelPlaybackRouteTarget {
 }
 
 func miniReelIsProductionPlaybackEndpoint(endpoint string) bool {
-	return endpoint == miniReelAPIBase+miniReelAPIPath
+	return endpoint == miniReelEffectiveLegacyAPIEndpoint()
 }
 
 func miniReelNativeOptionsWithRouteRace(ctx context.Context, vid, codecMode string) ([]miniReelOption, error) {
@@ -1440,7 +1439,7 @@ func miniReelNativeOptionsAttemptProfile(ctx context.Context, vid, endpoint stri
 		return nil, err
 	}
 	req.Header = headers
-	req.Header.Set("User-Agent", miniReelPlaybackUA)
+	req.Header.Set("User-Agent", miniReelEffectivePlaybackUA())
 	req.Header.Set("Accept", "application/json; charset=utf-8,application/x-protobuf")
 	req.Header.Set("Content-Encoding", "gzip")
 	req.Header.Set("Content-Type", "application/json; charset=utf-8")
@@ -1677,35 +1676,38 @@ func miniReelVideoTabOptionsWithClient(ctx context.Context, vid, endpoint string
 		return nil, err
 	}
 	stamp := time.Now().UnixMilli()
+	// Version/channel/device strings follow the remote config so a new
+	// official protocol can be adopted without an app release.
+	profile := miniReelEffectiveVideoTabProfile()
 	params := url.Values{
 		"_rticket":                  {strconv.FormatInt(stamp, 10)},
 		"ac":                        {"wifi"},
-		"aid":                       {"8662"},
+		"aid":                       {profile.AID},
 		"app_name":                  {"novelread"},
-		"channel":                   {"update_64"},
+		"channel":                   {profile.Channel},
 		"cdid":                      {device.cdid},
-		"device_brand":              {"Redmi"},
+		"device_brand":              {profile.DeviceBrand},
 		"device_id":                 {device.deviceID},
 		"device_platform":           {"android"},
-		"device_type":               {"25053RT47C"},
-		"dpi":                       {"520"},
+		"device_type":               {profile.DeviceType},
+		"dpi":                       {profile.DPI},
 		"dragon_device_type":        {"phone"},
 		"host_abi":                  {"arm64-v8a"},
 		"iid":                       {device.installID},
 		"is_android_pad_screen":     {"0"},
 		"language":                  {"zh"},
-		"manifest_version_code":     {"71332"},
+		"manifest_version_code":     {profile.VersionCode},
 		"need_personal_recommend":   {"1"},
 		"os":                        {"android"},
-		"os_api":                    {"36"},
-		"os_version":                {"16"},
-		"resolution":                {"1280*2772"},
+		"os_api":                    {profile.OSAPI},
+		"os_version":                {profile.OSVersion},
+		"resolution":                {profile.Resolution},
 		"player_so_load":            {"1"},
-		"pv_player":                 {"71332"},
+		"pv_player":                 {profile.VersionCode},
 		"ssmix":                     {"a"},
-		"update_version_code":       {"71332"},
-		"version_code":              {"71332"},
-		"version_name":              {"7.1.3.32"},
+		"update_version_code":       {profile.VersionCode},
+		"version_code":              {profile.VersionCode},
+		"version_name":              {profile.VersionName},
 		"compliance_status":         {"0"},
 		"video_id":                  {vid},
 		"video_id_type":             {"0"},
@@ -1721,7 +1723,7 @@ func miniReelVideoTabOptionsWithClient(ctx context.Context, vid, endpoint string
 	if err != nil {
 		return nil, err
 	}
-	req.Header.Set("User-Agent", miniReelPlaybackUA)
+	req.Header.Set("User-Agent", miniReelEffectivePlaybackUA())
 	req.Header.Set("Accept", "application/json; charset=utf-8")
 	if device.cookie != "" {
 		req.Header.Set("Cookie", device.cookie)
@@ -1869,7 +1871,7 @@ func miniReelFetchFallbackModelWithClient(ctx context.Context, raw string, clien
 	if err != nil {
 		return nil, errors.New("fallback_api request could not be created")
 	}
-	req.Header.Set("User-Agent", miniReelFallbackUA)
+	req.Header.Set("User-Agent", miniReelEffectiveFallbackUA())
 	req.Header.Set("Accept", "application/json; charset=utf-8,application/x-protobuf")
 	resp, err := requestClient.Do(req)
 	if err != nil {
@@ -2069,7 +2071,7 @@ func downloadMiniReelMedia(ctx context.Context, target, path string) (err error)
 	if err != nil {
 		return err
 	}
-	req.Header.Set("User-Agent", miniReelAppUA)
+	req.Header.Set("User-Agent", miniReelEffectiveAppUA())
 	req.Header.Set("Accept-Encoding", "identity")
 	req.Header.Set("Referer", "https://novel.snssdk.com/")
 	req.Header.Set("Origin", "https://novel.snssdk.com")

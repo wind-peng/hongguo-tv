@@ -9,13 +9,14 @@ import (
 // Use the existing three-request budget: signed primary, signed alternate,
 // then the original unsigned request for compatibility. Only an HTTP 200
 // empty response advances the caller to another policy. Fixture endpoints
-// must never escape to the public upstream.
+// must never escape to the public upstream. The primary and alternate hosts
+// follow the remote config; with no config they are the baked-in values.
 func miniReelPlaybackAttemptPolicy(endpoint string, attempt int) (string, bool) {
 	if attempt == 2 {
 		return endpoint, false
 	}
-	if attempt == 1 && endpoint == miniReelAPIBase+miniReelAPIPath {
-		return "https://api5-normal-hl.fqnovel.com" + miniReelAPIPath, true
+	if attempt == 1 && endpoint == miniReelEffectiveLegacyAPIEndpoint() {
+		return miniReelEffectiveLegacyAltEndpoint(), true
 	}
 	return endpoint, true
 }

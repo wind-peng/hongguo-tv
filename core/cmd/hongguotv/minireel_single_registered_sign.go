@@ -117,7 +117,7 @@ func signSingleRegistered(q url.Values, body []byte, stamp int64) (string, http.
 	q.Set("_rticket", strconv.FormatInt(stamp, 10))
 	query := q.Encode()
 	ts := uint32(stamp / 1000)
-	h := http.Header{"X-Khronos": {strconv.FormatUint(uint64(ts), 10)}, "X-SS-Req-Ticket": {strconv.FormatInt(stamp, 10)}, "X-Gorgon": {singleRegisteredGorgon(query, body, ts)}, "X-Argus": {singleRegisteredArgus(query, body, ts, a)}, "X-Ladon": {playbackLadon(ts, "8662", l)}}
+	h := http.Header{"X-Khronos": {strconv.FormatUint(uint64(ts), 10)}, "X-SS-Req-Ticket": {strconv.FormatInt(stamp, 10)}, "X-Gorgon": {singleRegisteredGorgon(query, body, ts)}, "X-Argus": {singleRegisteredArgus(query, body, ts, a)}, "X-Ladon": {playbackLadon(ts, firstNonEmpty(q.Get("aid"), "8662"), l)}}
 	m := md5.Sum(body)
 	h.Set("X-SS-STUB", strings.ToUpper(hex.EncodeToString(m[:])))
 	return query, h, nil

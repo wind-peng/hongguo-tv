@@ -7,12 +7,16 @@ import (
 )
 
 func miniReelProductionSources() miniReelPlaybackSources {
+	// The registered-single source is copied so its endpoint can follow the
+	// remote config; the identity cache stays shared with the package var.
+	registered := *productionSingleRegistered
+	registered.endpoint = miniReelEffectiveSingleRegisteredEndpoint()
 	return miniReelPlaybackSources{
-		tabEndpoint: miniReelVideoTabBase + miniReelVideoTabPath, tabIdentity: miniReelPlaybackRouteIdentities[2],
-		legacyEndpoints:  []string{"https://api5-normal-sinfonlineb.fqnovel.com" + miniReelAPIPath, "https://api5-normal-hl.fqnovel.com" + miniReelAPIPath},
+		tabEndpoint: miniReelEffectiveVideoTabEndpoint(), tabIdentity: miniReelPlaybackRouteIdentities[2],
+		legacyEndpoints:  miniReelEffectiveLegacyEndpoints(),
 		register:         registerMiniReelPlaybackDeviceContext,
-		registeredSingle: productionSingleRegistered,
-		singleEndpoint:   miniReelSingleEndpoint, registerSingle: registerMiniReelSingleDevice,
+		registeredSingle: &registered,
+		singleEndpoint:   miniReelEffectiveSingleEndpoint(), registerSingle: registerMiniReelSingleDevice,
 		memory: miniReelSourceMemory,
 	}
 }
@@ -171,7 +175,7 @@ func (s *miniReelSourceSequence) next(ctx context.Context) ([]miniReelOption, er
 	}
 	// Preserve the explicitly configured phone-device last resort, without
 	// allowing test/custom source lists to escape to production hosts.
-	if s.stage == 3 && s.sources.singleEndpoint == miniReelSingleEndpoint && miniReelPlaybackTargetRetryable(s.lastErr) {
+	if s.stage == 3 && s.sources.singleEndpoint == miniReelEffectiveSingleEndpoint() && miniReelPlaybackTargetRetryable(s.lastErr) {
 		s.stage++
 		s.provider = "" // The custom phone identity is never promoted.
 		if custom, ok := getPlaybackCustomDeviceForMiniReel(); ok && ctx.Err() == nil {

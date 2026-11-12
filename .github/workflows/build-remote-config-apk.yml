@@ -1,0 +1,62 @@
+name: Build remote-config APK
+
+# Builds the standard (non-MPV) debug APK from this fork so the remote-config
+# build can be installed and tested without a full release. Triggered manually
+# only; it does not publish anything anywhere.
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build-standard-apk:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Read APK version
+        run: python3 scripts/release_metadata.py --github-env "$GITHUB_ENV"
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: "1.25.x"
+          cache: true
+          cache-dependency-path: go.mod
+      - name: Set up Java
+        uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: "17"
+      - name: Set up Android SDK
+        uses: android-actions/setup-android@v3
+        with:
+          packages: platform-tools
+      - name: Install Android SDK packages
+        run: |
+          yes | sdkmanager --licenses >/dev/null || true
+          sdkmanager "platforms;android-36" "build-tools;35.0.0" "ndk;27.2.12479018"
+      - name: Set up Gradle
+        uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: "8.13"
+      - name: Test remote config
+        run: go test ./core/cmd/hongguotv -run 'TestMiniReelRemoteConfig|TestMiniReelPayloadResolution' -count=1
+      - name: Build Android native binaries
+        run: bash scripts/build_android_binaries.sh
+        env:
+          VERSION: ${{ env.HONGGUO_CORE_VERSION }}
+      - name: Build standard debug APK
+        run: gradle --no-daemon --max-workers=1 -p android assembleStandardDebug
+      - name: Verify standard APK
+        run: |
+          APK=android/app/build/outputs/apk/standard/debug/app-standard-debug.apk
+          test -f "$APK"
+          "$ANDROID_HOME/build-tools/35.0.0/aapt2" dump badging "$APK" | grep "package: name='rocks.aston.hongguotv'"
+          unzip -p "$APK" lib/arm64-v8a/libhongguotv.so | strings | grep -F 'raw.githubusercontent.com/wind-peng/hongguo-tv/main/remote-config.json'
+      - name: Upload standard APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: hongguo-tv-standard-debug-${{ env.APP_VERSION }}
+          path: android/app/build/outputs/apk/standard/debug/app-standard-debug.apk
+          retention-days: 30

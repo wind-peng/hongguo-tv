@@ -19,7 +19,10 @@ const singleRegisteredDeviceBase = "https://log.snssdk.com"
 const singleRegisteredUA = "com.phoenix.read/73532 (Linux; U; Android 16; zh_CN; 25053RT47C; Build/BP2A.250605.031.A3; Cronet/TTNetVersion:04657795 2026-01-23 QuicVersion:c67e9834 2025-09-08)"
 
 func singleRegisteredQuery(d miniReelDevice) url.Values {
-	return url.Values{"aid": {"8662"}, "app_name": {"novelread"}, "version_code": {"73532"}, "version_name": {"7.3.5.32"}, "manifest_version_code": {"73532"}, "update_version_code": {"73532"}, "channel": {"update_64"}, "device_platform": {"android"}, "os": {"android"}, "ssmix": {"a"}, "device_type": {"25053RT47C"}, "device_brand": {"Redmi"}, "language": {"zh"}, "os_api": {"36"}, "os_version": {"16"}, "resolution": {"1280*2772"}, "dpi": {"520"}, "ac": {"wifi"}, "device_id": {d.deviceID}, "iid": {d.installID}}
+	// Version/channel/device strings follow the remote config so a new
+	// official protocol can be adopted without an app release.
+	profile := miniReelEffectiveRegisteredProfile()
+	return url.Values{"aid": {profile.AID}, "app_name": {"novelread"}, "version_code": {profile.VersionCode}, "version_name": {profile.VersionName}, "manifest_version_code": {profile.VersionCode}, "update_version_code": {profile.VersionCode}, "channel": {profile.Channel}, "device_platform": {"android"}, "os": {"android"}, "ssmix": {"a"}, "device_type": {profile.DeviceType}, "device_brand": {profile.DeviceBrand}, "language": {"zh"}, "os_api": {profile.OSAPI}, "os_version": {profile.OSVersion}, "resolution": {profile.Resolution}, "dpi": {profile.DPI}, "ac": {"wifi"}, "device_id": {d.deviceID}, "iid": {d.installID}}
 }
 func registerSingleRegisteredDevice(ctx context.Context, base string, client *http.Client) (d miniReelDevice, err error) {
 	started := time.Now()
@@ -29,7 +32,8 @@ func registerSingleRegisteredDevice(ctx context.Context, base string, client *ht
 	if err != nil {
 		return d, err
 	}
-	h := map[string]any{"display_name": "红果免费短剧", "aid": 8662, "app_version": "7.3.5.32", "version_code": 73532, "manifest_version_code": 73532, "update_version_code": 73532, "channel": "update_64", "package": "com.phoenix.read", "app_language": "zh", "os": "Android", "os_version": "16", "os_api": 36, "device_model": "25053RT47C", "device_brand": "Redmi", "device_manufacturer": "Xiaomi", "cpu_abi": "arm64-v8a", "density_dpi": 520, "display_density": "xxhdpi", "resolution": "2772x1280", "language": "zh", "timezone": 8, "access": "wifi", "openudid": p.OpenUDID, "clientudid": p.ClientUDID, "cdid": p.CDID, "region": "CN", "tz_name": "Asia/Shanghai", "tz_offset": 28800, "sim_region": "cn", "device_platform": "android", "not_request_sender": 0, "is_system_app": 0, "sdk_flavor": "china", "rom": "OS2.0", "rom_version": "BP2A.250605.031.A3"}
+	profile := miniReelEffectiveRegisteredProfile()
+	h := map[string]any{"display_name": "红果免费短剧", "aid": mustMiniReelProfileInt(profile.AID), "app_version": profile.VersionName, "version_code": mustMiniReelProfileInt(profile.VersionCode), "manifest_version_code": mustMiniReelProfileInt(profile.VersionCode), "update_version_code": mustMiniReelProfileInt(profile.VersionCode), "channel": profile.Channel, "package": "com.phoenix.read", "app_language": "zh", "os": "Android", "os_version": profile.OSVersion, "os_api": mustMiniReelProfileInt(profile.OSAPI), "device_model": profile.DeviceType, "device_brand": profile.DeviceBrand, "device_manufacturer": profile.DeviceManufacturer, "cpu_abi": "arm64-v8a", "density_dpi": mustMiniReelProfileInt(profile.DPI), "display_density": "xxhdpi", "resolution": miniReelPayloadResolution(profile.Resolution), "language": "zh", "timezone": 8, "access": "wifi", "openudid": p.OpenUDID, "clientudid": p.ClientUDID, "cdid": p.CDID, "region": "CN", "tz_name": "Asia/Shanghai", "tz_offset": 28800, "sim_region": "cn", "device_platform": "android", "not_request_sender": 0, "is_system_app": 0, "sdk_flavor": "china", "rom": "OS2.0", "rom_version": "BP2A.250605.031.A3"}
 	stamp := time.Now().UnixMilli()
 	body, _ := json.Marshal(map[string]any{"magic_tag": "ss_app_log", "header": h, "_gen_time": stamp})
 	q := singleRegisteredQuery(d)
@@ -45,7 +49,7 @@ func registerSingleRegisteredDevice(ctx context.Context, base string, client *ht
 	if err != nil {
 		return d, err
 	}
-	req.Header.Set("User-Agent", singleRegisteredUA)
+	req.Header.Set("User-Agent", miniReelEffectiveRegisteredUA())
 	req.Header.Set("Content-Type", "application/json; charset=utf-8")
 	req.Header.Set("Accept", "application/json")
 	res, err := miniReelNoRedirectClient(client, miniReelDeviceTimeout).Do(req)
@@ -84,7 +88,7 @@ type miniReelSingleRegisteredSource struct {
 var productionSingleRegistered = &miniReelSingleRegisteredSource{endpoint: singleRegisteredEndpoint, identity: newMiniReelPlaybackDeviceCache(func() (miniReelDevice, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), miniReelDeviceTimeout)
 	defer cancel()
-	return registerSingleRegisteredDevice(ctx, singleRegisteredDeviceBase, nil)
+	return registerSingleRegisteredDevice(ctx, miniReelEffectiveSingleRegisteredDeviceBase(), nil)
 })}
 
 func (s *miniReelSingleRegisteredSource) options(ctx context.Context, vid, codecMode string) ([]miniReelOption, error) {
@@ -123,7 +127,7 @@ func (s *miniReelSingleRegisteredSource) request(ctx context.Context, vid, codec
 		return nil, err
 	}
 	req.Header = headers
-	req.Header.Set("User-Agent", singleRegisteredUA)
+	req.Header.Set("User-Agent", miniReelEffectiveRegisteredUA())
 	req.Header.Set("Content-Type", "application/json; charset=utf-8")
 	req.Header.Set("Accept", "application/json")
 	req.Header.Set("X-XS-From-Web", "0")
