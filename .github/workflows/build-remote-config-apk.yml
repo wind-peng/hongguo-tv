@@ -52,7 +52,10 @@ jobs:
         run: |
           APK=android/app/build/outputs/apk/standard/debug/app-standard-debug.apk
           test -f "$APK"
-          "$ANDROID_HOME/build-tools/35.0.0/aapt2" dump badging "$APK" | grep "package: name='rocks.aston.hongguotv'"
+          # Debug builds carry the .debug applicationId suffix (see
+          # scripts/verify_apks.py: package = base + suffix + '.debug').
+          "$ANDROID_HOME/build-tools/35.0.0/aapt2" dump badging "$APK" | grep "package: name='rocks.aston.hongguotv.debug'"
+          "$ANDROID_HOME/build-tools/35.0.0/aapt2" dump badging "$APK" | grep "versionName='0.2.170-debug'"
           unzip -p "$APK" lib/arm64-v8a/libhongguotv.so | strings | grep -F 'raw.githubusercontent.com/wind-peng/hongguo-tv/main/remote-config.json'
       - name: Upload standard APK
         uses: actions/upload-artifact@v4
