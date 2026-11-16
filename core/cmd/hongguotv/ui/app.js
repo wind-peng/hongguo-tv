@@ -220,6 +220,8 @@
   var accountCountryModalOpen = false;
   var accountCountryReturnFocus = null;
   var searchNumberScan;
+  var phoneSearch;
+  var searchScanReusable = false;
   var danmakuNumberScan;
   var searchScanOpen = false;
   var danmakuScanOpen = false;
@@ -435,6 +437,7 @@
   var rangeStallTimer = null;
   var lastPlaybackControl = null;
   var nativeFullscreen = false;
+  var desktopFullscreenRequest = Promise.resolve();
   var fullscreenExitKeepsHidden = false;
   var playbackQuality = '';
   var playbackQualities = [];
@@ -1058,7 +1061,7 @@
     }
     var fullscreenButton = document.getElementById('player-menu-fullscreen');
     if (fullscreenButton) {
-      var full = shell.classList.contains('is-cinema');
+      var full = playbackFullscreenActive();
       var key = full ? 'ui.exitFullscreen' : 'ui.fullscreen';
       var label = fullscreenButton.querySelector('.playback-command-label');
       var icon = full ? 'icon-fullscreen-exit' : 'icon-fullscreen';
@@ -2741,7 +2744,7 @@
         menuHint && !menuHint.classList.contains('is-hidden')) return;
     // Reuse the existing fullscreen layout and native bounds synchronization.
     // Keep the clear-screen state; revealing controls would arm another timer.
-    setCinema(true);
+    enterCinema();
   }
   function clearPrefetchedEpisodeHint() {
     if (prefetchedEpisodeHint) clearTimeout(prefetchedEpisodeHint.timer);
@@ -2894,7 +2897,7 @@
     var muted = (playbackAudioHold ? playbackAudioHold.muted : video.muted) || !video.volume;
     setControlIcon('volume', muted ? uiText('ui.mute', '静音') : uiText('ui.volume', '音量') + ' ' + Math.round(video.volume * 100) + '%', muted ? 'icon-volume-muted' : 'icon-volume');
     setControlIcon('quality', playbackQuality ? (playbackPreferences.quality ? '' : uiText('diagnostic.auto', '自动') + ' · ') + playbackQuality : uiText('ui.quality', '清晰度'), 'icon-quality');
-    var cinema = shell.classList.contains('is-cinema');
+    var cinema = playbackFullscreenActive();
     setControlIcon('fullscreen', cinema ? uiText('ui.exitFullscreen', '退出全屏') : uiText('ui.fullscreen', '全屏'), cinema ? 'icon-fullscreen-exit' : 'icon-fullscreen');
   }
   function savePlaybackPreferences() {
@@ -3342,10 +3345,17 @@
     layoutLastPlaybackFrame();
     if (portraitBackdrop) portraitBackdrop.layout();
   }
+  function hasDesktopFullscreenWindow() {
+    return desktopShell && window.HongguoDesktop.platform !== 'preview';
+  }
+  function playbackFullscreenActive() {
+    return hasDesktopFullscreenWindow() ? nativeFullscreen : shell.classList.contains('is-cinema');
+  }
   function setCinema(enabled) {
     shell.classList.toggle('is-cinema', enabled);
     if (!enabled && typeof nextSeasonHint !== 'undefined' && nextSeasonHint) nextSeasonHint.reset();
     updatePlaybackControls();
+    if (typeof playbackCommandMenuOpen !== 'undefined' && playbackCommandMenuOpen) updatePlaybackCommandMenu();
     // CSS cinema mode does not resize the Android WebView. Read the new
     // layout explicitly, including after the browser fullscreen callback.
     syncNativePlayerBounds();
@@ -3356,6 +3366,35 @@
     autoCinemaCandidate = false;
     autoCinemaSession = null;
     autoCinemaGeneration = 0;
+  }
+  function requestDesktopFullscreen(enabled) {
+    // Page cleanup may request exit just before continue-watching requests
+    // entry. Wails bindings can run concurrently; preserve the user's order.
+    desktopFullscreenRequest = desktopFullscreenRequest.then(function () {
+      var app = window.go && window.go.main && window.go.main.desktopApp;
+      if (!app || typeof app.SetFullscreen !== 'function') throw new Error('Fullscreen binding unavailable');
+      return app.SetFullscreen(enabled);
+    }).catch(function () {
+      setCinema(nativeFullscreen);
+      showNotice(uiText('ui.fullscreenFailed', '全屏切换失败，请重试'));
+    });
+  }
+  function enterCinema() {
+    if (hasDesktopFullscreenWindow()) {
+      // The window monitor applies the layout and icons after native fullscreen
+      // is observed. A refused request must not leave a sidebar-free window.
+      setCinema(nativeFullscreen);
+      requestDesktopFullscreen(true);
+      return;
+    }
+    setCinema(true);
+    // TV shells already fill the display. Only a browser preview needs the
+    // browser Fullscreen API, requested synchronously from the user's action.
+    if (!androidShell && !webosShell && shell.requestFullscreen) {
+      try {
+        Promise.resolve(shell.requestFullscreen()).catch(function () { setCinema(false); });
+      } catch (error) { setCinema(false); }
+    }
   }
   function finishAutoCinema(playback) {
     if (!autoCinemaCandidate || autoCinemaSession !== playback) return false;
@@ -3371,26 +3410,20 @@
     });
     cancelPendingAutoCinema();
     if (!shouldEnter) return false;
-    setCinema(true);
+    enterCinema();
     revealControls();
     return true;
   }
   function exitCinema(keepHidden) {
     fullscreenExitKeepsHidden = !!keepHidden;
     setCinema(false);
-    if (desktopShell && window.go && window.go.main) window.go.main.desktopApp.SetFullscreen(false);
+    if (hasDesktopFullscreenWindow()) requestDesktopFullscreen(false);
     else if (document.fullscreenElement && document.exitFullscreen) Promise.resolve(document.exitFullscreen()).catch(function () {});
   }
   function toggleCinema() {
     cancelPendingAutoCinema();
-    if (shell.classList.contains('is-cinema')) exitCinema();
-    else {
-      setCinema(true);
-      // Android already fills the display. Keep the CSS layout if the browser
-      // Fullscreen API is unavailable; never fullscreen the video alone.
-      if (desktopShell && window.go && window.go.main) window.go.main.desktopApp.SetFullscreen(true);
-      else if (shell.requestFullscreen) Promise.resolve(shell.requestFullscreen()).catch(function () {});
-    }
+    if (playbackFullscreenActive()) exitCinema();
+    else enterCinema();
     revealControls();
   }
   function desktopFullscreenChanged(enabled) {
@@ -3451,6 +3484,7 @@
     return true;
   }
   function pauseForBackground() {
+    if (typeof phoneSearch !== 'undefined' && phoneSearch) phoneSearch.stop();
     cancelSearchSuggestionActivation();
     if (accountQR && accountQR.snapshot().active) cancelAccountQR(false);
     if (typeof closePlaybackCommandMenu === 'function') closePlaybackCommandMenu(false);
@@ -3482,6 +3516,7 @@
   }
   function resumeFromBackground() {
     applicationInBackground = false;
+    if (typeof syncPhoneSearch === 'function') syncPhoneSearch();
     updatePlaybackControls();
     resumePendingContinuation(activePlayback);
     if (pageMode() === 'account' && document.activeElement && document.activeElement.closest('#account-keypad-modal')) goFocus(firstContentFocus());
@@ -5120,7 +5155,7 @@
         applicationInBackground || applicationHidden() || !isPlaybackPage() || !error || error.name === 'AbortError' || error.recoveryComplete) return false;
     var code = error.code || '';
     var temporary = [408, 425, 429, 500, 502, 503, 504].indexOf(Number(error.status)) >= 0;
-    if (code === 'VIDEO_MODEL_HTTP' ? !temporary :
+    if (code === 'VIDEO_MODEL_HTTP' || code === 'ACCOUNT_DEVICE' ? !temporary :
         ['VIDEO_MODEL_EMPTY', 'UPSTREAM_TIMEOUT', 'ETIMEDOUT', 'ESOCKETTIMEDOUT', 'ECONNRESET',
           'ECONNREFUSED', 'EPIPE', 'EAI_AGAIN', 'ENETUNREACH', 'EHOSTUNREACH', 'ENETDOWN'].indexOf(code) < 0) return false;
     if (playbackRecovery.next({ native: playbackEngineName() }) !== 'refresh') return false;
@@ -5463,13 +5498,24 @@
     if (!playbackAudioHold || presentation.audioPending || !playbackVideoReady(playback, presentation, video)) return;
     presentation.audioPending = true;
     var epoch = presentation.epoch;
+    var linuxFallback = desktopShell && window.HongguoDesktop.platform === 'linux';
+    var finished = false, timer = null, animation = null;
     var frame = typeof requestAnimationFrame === 'function' ? requestAnimationFrame : function (callback) { return setTimeout(callback, 16); };
-    // The cover removal must get its own paint before sound is restored.
-    frame(function () {
+    function restore() {
+      if (linuxFallback) {
+        if (finished) return;
+        finished = true;
+        clearTimeout(timer);
+        if (animation !== null && typeof cancelAnimationFrame === 'function') cancelAnimationFrame(animation);
+      }
       if (playback.presentation !== presentation || presentation.epoch !== epoch) return;
       presentation.audioPending = false;
       if (!document.getElementById('hero').classList.contains('is-preparing-video') && playbackVideoReady(playback, presentation, video)) releasePlaybackAudio(playback);
-    });
+    }
+    // Keep the paint boundary on every platform. Only Linux needs a fallback
+    // when WebKit delays that last callback after the cover has been removed.
+    if (linuxFallback) timer = setTimeout(restore, 250);
+    animation = frame(restore);
   }
   function waitForPlaybackPaint(generation, signal) {
     // The first animation callback runs before paint. The second lets the
@@ -6013,6 +6059,7 @@
   }
 
   function startPlayer(item, returnFocus, startOptions) {
+    if (typeof phoneSearch !== 'undefined' && phoneSearch) phoneSearch.stop();
     if (!item || !item.series_id) return;
     if (typeof closePlaybackCommandMenu === 'function') closePlaybackCommandMenu(false);
     if (typeof closePlaybackMenuHint === 'function') closePlaybackMenuHint();
@@ -6048,7 +6095,7 @@
     if (autoCinemaCandidate) autoCinemaGeneration = feedGeneration;
     if (recommendation) settleRecommendationSave(recommendation, libraryQueue);
     goFocus(document.getElementById('hero-feed-focus'));
-    if (watchingResume) { cancelPendingAutoCinema(); setCinema(true); revealControls(); }
+    if (watchingResume) { cancelPendingAutoCinema(); enterCinema(); revealControls(); }
   }
 
   function leavePlayer() {
@@ -7619,6 +7666,7 @@
 
   function closeSearchScan(restore) {
     searchScanOpen = false;
+    searchScanReusable = false;
     if (searchNumberScan) searchNumberScan.stop();
     document.getElementById('search-scan-modal').classList.add('is-hidden');
     document.getElementById('search-scan-modal').setAttribute('aria-hidden', 'true');
@@ -7626,6 +7674,7 @@
     document.getElementById('search-scan-copy').textContent = uiText('ui.scanSearchCopy', '手机输入或粘贴剧名，发送后在电视上搜索');
     document.getElementById('search-scan-hint').innerHTML = uiText('ui.scanHint', '手机和电视需在同一局域网<br>二维码5分钟有效，关闭后失效');
     document.getElementById('search-scan-close').textContent = uiText('ui.scanBackSearch', '返回搜索');
+    document.getElementById('search-scan-refresh').textContent = uiText('ui.scanRefresh', '刷新二维码');
     var target = searchScanReturnFocus; searchScanReturnFocus = null;
     if (restore && pageMode() === 'search') goFocus(focusables().indexOf(target) >= 0 ? target : firstVisible('#search-scan'));
   }
@@ -7641,7 +7690,10 @@
     document.getElementById('search-scan-modal').classList.remove('is-hidden');
     document.getElementById('search-scan-modal').setAttribute('aria-hidden', 'false');
     goFocus(document.getElementById('search-scan-close'));
-    searchNumberScan.start('search');
+    if (phoneSearch) {
+      searchScanReusable = true;
+      phoneSearch.start();
+    } else searchNumberScan.start('search');
   }
 
   function closeDanmakuScan(restore) {
@@ -8184,6 +8236,7 @@
   function activatePage(item, restoring) {
     cancelSearchSuggestionActivation();
     if (item.dataset.page === 'apps' && (typeof recommendedApps === 'undefined' || !recommendedApps || !recommendedApps.supported)) return;
+    if (typeof phoneSearch !== 'undefined' && phoneSearch) phoneSearch.stop();
     if (typeof watchStatisticsCollector !== 'undefined' && watchStatisticsCollector) watchStatisticsCollector.stop(true);
     if (typeof watchStatisticsView !== 'undefined' && watchStatisticsView && watchStatisticsView.isOpen()) closeWatchStatistics(false);
     if (portraitBackdrop) portraitBackdrop.reset();
@@ -8281,6 +8334,7 @@
     document.getElementById('page-placeholder-copy').textContent = uiText('ui.pageNotReady', '这个页面的数据和交互正在接入。');
     showNotice(uiText('ui.pageEntered', '{page}页面已进入，下一步接入对应数据。', { page: label ? label.textContent : uiText('ui.page', '页面') }));
     }
+    if (typeof syncPhoneSearch === 'function') syncPhoneSearch();
     if (!restoring) goFocus(firstContentFocus());
   }
 
@@ -9147,6 +9201,44 @@
       if (method === 'POST') { options.headers = { 'Content-Type': 'application/json' }; options.body = JSON.stringify({ kind: kind, country_code: meta && meta.country_code || '' }); }
       return fetchData('/api/v1/number-input' + (session ? '?session=' + encodeURIComponent(session) : ''), options);
   }
+  function canReceivePhoneSearch() {
+    return !desktopShell && pageMode() === 'search' && !applicationInBackground && !applicationHidden() &&
+      !detailModalOpen && !actorWorksOpen && !confirmOpen && !supportModalOpen && !accountKeypadOpen();
+  }
+  function syncPhoneSearch() {
+    if (!phoneSearch) return;
+    if (!desktopShell && pageMode() === 'search' && !applicationInBackground && !applicationHidden()) phoneSearch.start();
+    else phoneSearch.stop();
+  }
+  function renderPhoneSearchScan(state) {
+    if (!searchScanOpen || !searchScanReusable) return;
+    if (state.state === 'unavailable') {
+      searchScanReusable = false;
+      document.getElementById('search-scan-hint').innerHTML = uiText('ui.scanHint', '手机和电视需在同一局域网<br>二维码5分钟有效，关闭后失效');
+      document.getElementById('search-scan-refresh').textContent = uiText('ui.scanRefresh', '刷新二维码');
+      searchNumberScan.start('search'); return;
+    }
+    var image = document.getElementById('search-scan-qr');
+    image.classList.toggle('is-hidden', state.state !== 'waiting');
+    if (state.state === 'waiting') image.src = state.qr; else image.removeAttribute('src');
+    document.getElementById('search-scan-status').textContent = state.state === 'waiting' ? uiText('ui.phoneSearchWaiting', '扫码后可收藏手机页面，下次直接打开') : uiText('ui.scanCreating', '正在生成二维码…');
+    document.getElementById('search-scan-hint').innerHTML = uiText('ui.phoneSearchHint', '手机和电视需在同一局域网<br>电视停留在“找剧”页时可重复搜索；IP 变化后重新扫码');
+    document.getElementById('search-scan-refresh').textContent = uiText('ui.phoneSearchReconnect', '重新连接');
+  }
+  if (!desktopShell && (androidShell || webosShell) && window.HongguoPhoneSearch) phoneSearch = window.HongguoPhoneSearch.create({
+    request: function (method, session, ack, ready) {
+      return fetchData('/api/v1/search/phone?session=' + encodeURIComponent(session) + '&ack=' + ack + '&ready=' + (ready ? '1' : '0'),
+        method === 'POST' ? {method:method,headers:{'Content-Type':'application/json'},body:'{}'} : {method:method});
+    },
+    canReceive: canReceivePhoneSearch,
+    render: renderPhoneSearchScan,
+    complete: function (value) {
+      if (!canReceivePhoneSearch()) return;
+      if (searchScanOpen) closeSearchScan(false);
+      closeSearchSuggestions(false); searchInput.value = value;
+      goFocus(firstSearchAction()); submitSearch();
+    }
+  });
   searchDiscovery = window.HongguoSearchDiscovery.create({
     request: function () { return fetchData('/api/v1/search/discovery'); },
     render: renderSearchDiscovery
@@ -9195,7 +9287,7 @@
     }
   });
   document.getElementById('search-scan-close').addEventListener('click', function () { if (danmakuScanOpen) closeDanmakuScan(true); else closeSearchScan(true); });
-  document.getElementById('search-scan-refresh').addEventListener('click', function () { if (danmakuScanOpen) danmakuNumberScan.start('danmaku'); else if (searchScanOpen) searchNumberScan.start('search'); });
+  document.getElementById('search-scan-refresh').addEventListener('click', function () { if (danmakuScanOpen) danmakuNumberScan.start('danmaku'); else if (searchScanOpen) { if (searchScanReusable && phoneSearch) phoneSearch.restart(); else searchNumberScan.start('search'); } });
   accountNumberScan = window.HongguoNumberInput.create({
     request: requestScanInput,
     render: function (state) {

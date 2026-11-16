@@ -5,6 +5,10 @@
   // without changing the UI or the focus model.
   root.HongguoLocales = root.HongguoLocales || {};
   root.HongguoLocales['zh-CN'] = {
+    "ui.phoneSearchWaiting": "扫码后可收藏手机页面，下次直接打开",
+    "ui.phoneSearchHint": "手机和电视需在同一局域网<br>电视停留在“找剧”页时可重复搜索；IP 变化后重新扫码",
+    "ui.phoneSearchReconnect": "重新连接",
+
     "nav.apps": "应用",
     "apps.title": "应用推荐",
     "apps.subtitle": "我的其他作品，同样为电视体验而做。",
@@ -1043,6 +1047,7 @@
     'ui.quality': '清晰度',
     'ui.exitFullscreen': '退出全屏',
     'ui.fullscreen': '全屏',
+    'ui.fullscreenFailed': '全屏切换失败，请重试',
     'ui.playbackSettingsSaveFailed': '播放设置未保存',
     'ui.notObtained': '未取得',
     'ui.viewportSize': '视口尺寸',

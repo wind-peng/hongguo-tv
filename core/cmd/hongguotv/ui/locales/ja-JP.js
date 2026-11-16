@@ -2,6 +2,10 @@
   'use strict';
   root.HongguoLocales = root.HongguoLocales || {};
   root.HongguoLocales['ja-JP'] = {
+    "ui.phoneSearchWaiting": "スマホのページを保存すると、次回からスキャン不要です",
+    "ui.phoneSearchHint": "スマホとテレビを同じネットワークに接続してください<br>テレビの「検索」画面で繰り返し検索できます。IP が変わった場合は再スキャンしてください",
+    "ui.phoneSearchReconnect": "再接続",
+
     "nav.apps": "アプリ",
     "apps.title": "おすすめアプリ",
     "apps.subtitle": "テレビでの使いやすさを大切にした、私のほかのアプリ。",
@@ -1040,6 +1044,7 @@
   "ui.quality": "画質",
   "ui.exitFullscreen": "全画面を終了",
   "ui.fullscreen": "全画面",
+  "ui.fullscreenFailed": "全画面の切り替えに失敗しました。もう一度お試しください",
   "ui.playbackSettingsSaveFailed": "処理に失敗しました",
   "ui.notObtained": "該当する内容はありません",
   "ui.viewportSize": "ビューポート尺寸",
