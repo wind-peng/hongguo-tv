@@ -4,6 +4,8 @@
 
 webOS 界面默认采用 `1280×720` 画布，沿用已确认的“红果短剧·720测试”显示效果和现有 CSS，让文字、图标更适合电视观看。此配置只控制界面排版，视频清晰度仍由片源与播放设置决定。
 
+webOS 4 的旧 Node 服务启动与上游证书链兼容修复、测试范围见[旧运行时验证](../docs/webos-legacy-runtime.md)，仍需 LG 真机安装验收。
+
 当前源码已接入并验证的链路：
 
 - `file://` 页面加载和相对资源路径；
@@ -20,7 +22,7 @@ webOS 界面默认采用 `1280×720` 画布，沿用已确认的“红果短剧�
 
 协议、解密和媒体文件已在 macOS 网络环境中用真实上游数据验证。优先使用 Range/CENC 按需读取；缺少强 ETag 等条件时仍安全回退到完整下载后解密，不会将失败的预取变为整集后台下载。磁盘缓存具有 512 MiB 总预算、2 小时闲置清理和播放占用保护，详见 [缓存策略](../docs/webos-media-cache.md)。
 
-0.2.173 同步新版播放链接获取与兼容编码回退，并修复扫码登录异常。webOS 继续使用现有 HTML5 播放流程、Range 边播边下和测试版渠道。本次是同一应用版本的独立测试构建，需手动安装，不会覆盖 Android、桌面或正式更新通道。详见[下一集准备机制](../docs/episode-prefetch.md)。[下载 webOS 0.2.173 测试版](https://github.com/aston314/hongguo-tv-releases/releases/tag/webos-v0.2.173-test.27)。
+0.2.177 优化播放取源回退与切集切剧体验，并修复 webOS 4 旧 Node 服务启动及指定上游域名的证书兼容问题。继续使用现有 HTML5 播放流程、Range 边播边下和测试版渠道；webOS 4 安装播放仍需真机复测。[下载 webOS 0.2.177 测试版](https://github.com/aston314/hongguo-tv-releases/releases/tag/webos-v0.2.177-test.27)。
 
 2026-10-25，用户在 [Issue #57](https://github.com/aston314/hongguo-tv-releases/issues/57) 回报 LG OLED65C5PTA（台湾版，固件 43.21.77、webOS SDK 11.2.0）安装 `hongguo-webos-0.2.117-test.25.ipk` 后，安装、启动、1080P 视频画面、声音、账号登录及原生遥控器滚轮均正常。安装方式为 Developer Mode + webOS Dev Manager 1.99.20，网络为台湾 Wi-Fi。
 

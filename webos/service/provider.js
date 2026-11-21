@@ -147,7 +147,7 @@
       // playback retries must start outside the shared agent's socket pool.
       if (headers && headers.Connection === 'close') options.agent = false;
       var request;
-      try { request = transport.request(options); } catch (error) { finish(error); return; }
+      try { request = transport.request(require('./upstream-tls')(options)); } catch (error) { finish(error); return; }
       if (signal) signal.addEventListener('abort', aborted);
       request.on('timeout', function () { request.destroy(fail('上游请求超时', undefined, 'UPSTREAM_TIMEOUT')); });
       request.on('error', function (error) { finish(error); });
@@ -419,6 +419,20 @@
     }
     if (!row || row.video_model == null) return null;
     var model = decodeModel(row.video_model);
+    return { code: 0, data: (function () { var out = {}; out[String(vid)] = { video_model: model }; return out; }()) };
+  }
+
+  // The v1.3.3 recovery must not accept a neighboring row or a direct model
+  // convenience shape. The identity was consumed by the failed v5 POST, so a
+  // wrong VID here must leave the original empty-response error intact.
+  function videoTabEnvelopeExact(vid, root) {
+    var data = asMap(root && root.data);
+    if (!data) return null;
+    var rows = asMap(data.video_model_data) || data;
+    var row = asMap(rows[String(vid)]);
+    if (!row || row.video_model == null) return null;
+    var model = decodeModel(row.video_model);
+    if (!model || typeof model !== 'object' || Array.isArray(model)) return null;
     return { code: 0, data: (function () { var out = {}; out[String(vid)] = { video_model: model }; return out; }()) };
   }
 
@@ -760,6 +774,27 @@
     if (!error || error.name === 'AbortError') return false;
     return freshPlaybackRetryable(error) || ['VIDEO_MODEL_NO_QUALITY', 'VIDEO_MODEL_MISSING', 'VIDEO_MODEL_INVALID_JSON'].indexOf(error.code) >= 0;
   }
+  function mobileVideoTabRecoveryOptions(vid, device, signal, report) {
+    var request = mobileV5.videoTabRecovery(String(vid), device, Date.now());
+    report({ stage: 'video_tab', code: 'VIDEO_TAB_REQUEST' });
+    var cookie = playbackCookieHeader(device.cookies);
+    var headers = Object.assign({}, request.headers);
+    if (cookie) headers.Cookie = cookie;
+    return requestBuffer(request.url, 'GET', headers, null, mobileV5.maxJSON, signal, 15000).then(function (response) {
+      report({ stage: 'video_tab', http_status: response.status, response_bytes: response.body.length, code: 'VIDEO_TAB_RESPONSE' });
+      if (response.status < 200 || response.status >= 300) throw fail('video_tab HTTP ' + response.status, response.status, 'VIDEO_TAB_HTTP', 'video_tab');
+      var text = response.body.toString('utf8');
+      if (!trim(text)) throw fail('video_tab 返回空响应', 502, 'VIDEO_TAB_EMPTY', 'video_tab');
+      var root;
+      try { root = parseExactJSON(text); } catch (error) { throw fail('video_tab 响应不是有效 JSON', 502, 'VIDEO_TAB_INVALID_JSON', 'video_tab'); }
+      var code = businessCode(root);
+      if (code && code !== '0') throw fail('video_tab 拒绝了播放请求（' + code + '）', 502, 'VIDEO_TAB_REJECTED', 'video_tab');
+      var envelope = videoTabEnvelopeExact(vid, root);
+      if (!envelope) throw fail('video_tab 未返回所选分集的视频数据', 502, 'VIDEO_MODEL_EMPTY', 'video_tab');
+      report({ stage: 'video_tab', code: 'VIDEO_TAB_JSON' });
+      return optionsFromEnvelope(vid, envelope, signal, 'video_tab', report);
+    });
+  }
   function mobileVideoOptions(vid, signal, retry) {
     var state = retry.identityState, diagnostic = {stage:'multi_video_model',code:'VIDEO_MODEL_REQUEST'};
     if (state.multiLegacyPending) { state.multiLegacyPending = false; return legacyVideoOptions(vid,signal,retry); }
@@ -773,9 +808,9 @@
       lastVideoModelDiagnostic = Object.assign({video_id:String(vid)},diagnostic);
       if (retry.onDiagnostic) retry.onDiagnostic(Object.assign({},diagnostic));
     }
-    function next(device,attempt) {
+    function next(device,attempt,originalEmpty) {
       if (current.signal.aborted || playbackIdentityClosed) throw preparationCancelled();
-      var contentType = retry.contentType || '1004', request = mobileV5.build(String(vid),contentType,device,Date.now());
+      var contentType = retry.contentType || '1004', request = mobileV5.build(String(vid),contentType,device,Date.now(),attempt === 2);
       return requestBuffer(request.url,'POST',request.headers,request.body,mobileV5.maxJSON,current.signal,8000).catch(function (error) {
         // requestBuffer's bounded-body rejection is generic. Classify it only
         // for this protocol, so malformed v5 data can use the retained sources.
@@ -784,23 +819,37 @@
       }).then(function (response) {
         report({attempt:attempt,http_status:response.status,response_bytes:response.body.length,code:'VIDEO_MODEL_RESPONSE'});
         if (response.status !== 200) throw fail('mobile video_model HTTP '+response.status,response.status,'VIDEO_MODEL_HTTP','multi_video_model');
-        if (!trim(response.body.toString('utf8'))) throw fail('mobile video_model 返回空响应',502,'VIDEO_MODEL_EMPTY','multi_video_model');
+        if (!trim(response.body.toString('utf8'))) {
+          var empty = fail('mobile video_model 返回空响应',502,'VIDEO_MODEL_EMPTY','multi_video_model');
+          empty.retryAfter = !!(response.headers && (response.headers['retry-after'] || response.headers['Retry-After']));
+          throw empty;
+        }
         var envelope;
         try { envelope = parseExactJSON(response.body.toString('utf8')); } catch (ignored) { throw fail('mobile video_model 响应无效',502,'VIDEO_MODEL_INVALID_JSON','multi_video_model'); }
         if (!envelope || typeof envelope !== 'object' || Array.isArray(envelope)) throw fail('mobile video_model 响应无效',502,'VIDEO_MODEL_INVALID_JSON','multi_video_model');
         return optionsFromEnvelope(vid,mobileV5.normalize(envelope,String(vid),contentType),current.signal,'multi_video_model',report);
       }).catch(function (error) {
         error.videoModel = Object.assign({},diagnostic);
-        if (attempt === 1 && error.code === 'VIDEO_MODEL_EMPTY' && diagnostic.http_status === 200 && !current.signal.aborted) {
-          return mobileV5Identity.refreshAfterEmpty(device,current.signal).then(function (fresh) { return next(fresh,2); });
+        if (current.signal.aborted || error && error.name === 'AbortError') throw preparationCancelled();
+        if (error.code === 'VIDEO_MODEL_EMPTY' && diagnostic.http_status === 200 && !error.retryAfter) {
+          // v7.7 retries V5 on the alternate host before the signed bodyless
+          // video_tab recovery. All three requests reuse this registration.
+          if (attempt === 1) return next(device, 2, error);
+          return mobileVideoTabRecoveryOptions(vid, device, current.signal, report).catch(function (recoveryError) {
+            if (current.signal.aborted || recoveryError && recoveryError.name === 'AbortError') throw preparationCancelled();
+            throw originalEmpty || error;
+          });
         }
-        throw error;
+        throw originalEmpty || error;
       });
     }
     return mobileV5Identity.get(current.signal).then(function (d) { return next(d,1); }).then(function (options) {
       finish(); state.multiLegacyPending = true; return options;
     },function (error) {
       finish(); if (signal && signal.aborted || playbackIdentityClosed) throw preparationCancelled();
+      // A recovery GET can fail with another HTTP status. Keep the V5
+      // failure that selected this fallback, so the legacy path stays usable.
+      if (error.videoModel) diagnostic = Object.assign({}, error.videoModel);
       if (error.code === 'ACCOUNT_DEVICE') diagnostic = {stage:'device_register'};
       report({code:error.code || 'VIDEO_MODEL_NETWORK',network_reason:networkDiagnostic(error)});
       error.videoModel = Object.assign({},diagnostic); state.lastError = error;
