@@ -32,20 +32,27 @@ type miniPlayerWindow interface {
 }
 
 type miniPlayerWindowState struct {
-	Active           bool   `json:"active"`
-	TitlebarHidden   bool   `json:"titlebar_hidden"`
-	TitlebarFallback bool   `json:"titlebar_fallback,omitempty"`
-	Error            string `json:"error,omitempty"`
+	Active           bool           `json:"active"`
+	TitlebarHidden   bool           `json:"titlebar_hidden"`
+	TitlebarFallback bool           `json:"titlebar_fallback,omitempty"`
+	Error            string         `json:"error,omitempty"`
+	AspectSession    uint64         `json:"aspect_session,omitempty"`
+	AspectApplied    bool           `json:"aspect_applied,omitempty"`
+	AspectFallback   bool           `json:"aspect_fallback,omitempty"`
+	initialSize      windowGeometry // requested entry size; GTK configure events may still report the old frame
 }
 
 type miniPlayerController struct {
-	mu                          sync.Mutex
-	active                      atomic.Bool
-	normal, small               windowGeometry
-	wasFullscreen, wasMaximised bool
-	displayID, smallDisplayID   string
-	stateFile                   string
-	titlebarHidden              bool
+	mu                                             sync.Mutex
+	active                                         atomic.Bool
+	normal, small                                  windowGeometry
+	wasFullscreen, wasMaximised                    bool
+	displayID, smallDisplayID                      string
+	stateFile                                      string
+	titlebarHidden                                 bool
+	aspect                                         miniAspect
+	aspectSession                                  uint64
+	aspectInstalled, aspectApplied, aspectFallback bool
 }
 
 func (m *miniPlayerController) state() miniPlayerWindowState {
@@ -66,6 +73,11 @@ func waitWindowChange(pending func() bool) error {
 func (m *miniPlayerController) set(w miniPlayerWindow, enabled, portrait, hideTitlebar bool) miniPlayerWindowState {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	return m.setLocked(w, enabled, portrait, hideTitlebar)
+}
+
+func (m *miniPlayerController) setLocked(w miniPlayerWindow, enabled, portrait, hideTitlebar bool) miniPlayerWindowState {
+	var initialSize windowGeometry
 	if m.active.Load() == enabled {
 		return miniPlayerWindowState{Active: m.active.Load(), TitlebarHidden: m.titlebarHidden}
 	}
@@ -115,6 +127,7 @@ func (m *miniPlayerController) set(w miniPlayerWindow, enabled, portrait, hideTi
 			small.Height = height - 80
 		}
 		w.setMinimum(280, 200)
+		initialSize = small
 		w.setGeometry(small)
 		if !remembered {
 			w.center()
@@ -123,8 +136,11 @@ func (m *miniPlayerController) set(w miniPlayerWindow, enabled, portrait, hideTi
 		w.keepVisible()
 		m.small, m.smallDisplayID = w.geometry(), id
 		m.active.Store(true)
+		m.aspectSession++
 		if hideTitlebar {
-			return m.setTitlebarLocked(w, true)
+			result := m.setTitlebarLocked(w, true)
+			result.initialSize = initialSize
+			return result
 		}
 	} else {
 		// Native title-bar fullscreen/maximise can also be used in the small
@@ -150,6 +166,11 @@ func (m *miniPlayerController) set(w miniPlayerWindow, enabled, portrait, hideTi
 				return result
 			}
 		}
+		if err := m.clearAspectLocked(w); err != nil {
+			result := m.windowStateLocked()
+			result.Error = "cannot restore window aspect ratio"
+			return result
+		}
 		w.setTopmost(false)
 		w.setMinimum(normalMinWidth, normalMinHeight)
 		w.setGeometry(m.normal)
@@ -157,6 +178,7 @@ func (m *miniPlayerController) set(w miniPlayerWindow, enabled, portrait, hideTi
 			w.center()
 		}
 		m.active.Store(false)
+		m.aspect, m.aspectFallback = miniAspect{}, false
 		if m.wasMaximised {
 			w.setMaximised(true)
 		}
@@ -164,13 +186,15 @@ func (m *miniPlayerController) set(w miniPlayerWindow, enabled, portrait, hideTi
 			w.setFullscreen(true)
 		}
 	}
-	return miniPlayerWindowState{Active: m.active.Load(), TitlebarHidden: m.titlebarHidden}
+	result := m.windowStateLocked()
+	result.initialSize = initialSize
+	return result
 }
 
 // Titlebar changes are optional. A failed enhancement must retain a working
 // decorated mini window; a failed restoration must keep its return controls.
 func (m *miniPlayerController) setTitlebarLocked(w miniPlayerWindow, hidden bool) miniPlayerWindowState {
-	result := miniPlayerWindowState{Active: m.active.Load(), TitlebarHidden: m.titlebarHidden}
+	result := m.windowStateLocked()
 	if hidden == m.titlebarHidden {
 		return result
 	}
@@ -189,6 +213,10 @@ func (m *miniPlayerController) setTitlebarLocked(w miniPlayerWindow, hidden bool
 	}
 	m.titlebarHidden = hidden
 	result.TitlebarHidden = hidden
+	if m.aspect.valid() {
+		m.applyAspectLocked(w, m.aspect, true)
+		result = m.windowStateLocked()
+	}
 	return result
 }
 

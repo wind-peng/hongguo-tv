@@ -466,8 +466,9 @@
   // Bounded, memory-only diagnostics. No drama IDs, titles or account data.
   window.HongguoTVPlaybackTiming = { snapshot: function () { return playbackTiming.map(function (item) { return Object.assign({}, item); }); } };
   var episodePrefetch = HongguoEpisodePrefetch.create({
-    maxRetries: window.HongguoWebOS ? 1 : 0,
-    retryDelayMs: 3000,
+    maxRetries: window.HongguoWebOS ? 3 : 0,
+    retryDelayMs: window.HongguoWebOS ? 1500 : 3000,
+    retryWindowMs: window.HongguoWebOS ? 12000 : 0,
     maxAgeMs: window.HongguoWebOS ? 120000 : 0,
     fullMaxAgeMs: 110 * 60 * 1000,
     lookup: function (info, signal) {
@@ -484,7 +485,12 @@
       // complete-file resolver, while range preparation must stay on the
       // bounded Range path and never silently download the whole episode.
       var params = HongguoEpisodePrefetch.prepareParams(target);
-      return fetchData('/api/v1/play/info?' + new URLSearchParams(params), signal ? { signal: signal } : {});
+      return fetchData('/api/v1/play/info?' + new URLSearchParams(params), signal ? { signal: signal } : {}).then(function (data) {
+        if (window.HongguoWebOS && window.HongguoWebOSAudio && typeof window.HongguoWebOSAudio.warm === 'function' && data && data.path) {
+          try { window.HongguoWebOSAudio.warm(data.path, signal); } catch (ignored) {}
+        }
+        return data;
+      });
     }
   });
   var applicationInBackground = false;
@@ -3585,6 +3591,8 @@
     var width = video.videoWidth || activePlayback && activePlayback.videoWidth || 0;
     var height = video.videoHeight || activePlayback && activePlayback.videoHeight || 0;
     return { available: available, title: item.title || '', episode: episode, portrait: height > width,
+      videoWidth: video.readyState >= 1 ? Number(video.videoWidth) || 0 : 0,
+      videoHeight: video.readyState >= 1 ? Number(video.videoHeight) || 0 : 0,
       previousEpisode: available && episode > 1, nextEpisode: available && episode > 0 && (!total || episode < total),
       previousDrama: recommend && feedIndex > 0, nextDrama: recommend && (feedIndex + 1 < feedItems.length || feedPager.hasMore() || !!feedPager.error),
       canPlay: available && !!video.getAttribute('src'), paused: video.paused || video.ended,
@@ -9516,6 +9524,22 @@
   document.getElementById('app-check-update').addEventListener('click', appUpdates.activate);
   document.getElementById('desktop-download-update').addEventListener('click', function () { if (desktopShell) window.HongguoTVUpdates.download(); });
   document.getElementById('desktop-open-update-folder').addEventListener('click', function () { if (desktopShell) window.HongguoTVUpdates.openFolder(); });
+  var hardwareHevcSettings = window.HongguoPlaybackSettings.createHardwareHevc({
+    bridge: window.HongguoNativePlayer,
+    render: function (data) {
+      var card = document.getElementById('hevc-playback-settings');
+      card.classList.toggle('is-hidden', !data.supported);
+      card.querySelectorAll('.hevc-hardware-action').forEach(function (button) {
+        var selected = button.getAttribute('data-mode') === data.mode;
+        button.classList.toggle('account-primary', selected);
+        button.setAttribute('aria-pressed', selected ? 'true' : 'false');
+      });
+      document.getElementById('hevc-decode-state').textContent = data.message || '';
+    }
+  });
+  document.querySelectorAll('.hevc-hardware-action').forEach(function (button) {
+    button.addEventListener('click', function () { hardwareHevcSettings.choose(button.getAttribute('data-mode')); });
+  });
   var playbackSettings = window.HongguoPlaybackSettings.create({
     bridge: window.HongguoNativePlayer,
     render: function (data) {
